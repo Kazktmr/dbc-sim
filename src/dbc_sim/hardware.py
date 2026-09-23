@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Protocol
 
 from dbc_sim.frames import BusKind, CanFrame, ChannelConfig
@@ -96,11 +97,15 @@ def _open_python_can(config: ChannelConfig, backend: str) -> Bus:
 
 
 class PythonCanBus:
+    """python-can wrapper with TX retry on a full hardware queue."""
+
     def __init__(self, config: ChannelConfig, inner) -> None:
         self.config = config
         self.name = config.name
         self.kind = config.kind
         self._inner = inner
+        self.tx_retries = 0
+        self.tx_dropped = 0
 
     def open(self) -> None:
         return None
@@ -111,16 +116,33 @@ class PythonCanBus:
     def send(self, frame: CanFrame) -> None:
         import can
 
-        self._inner.send(
-            can.Message(
-                arbitration_id=frame.arbitration_id,
-                data=frame.data,
-                is_extended_id=frame.is_extended_id,
-                is_fd=frame.is_fd,
-                bitrate_switch=frame.bitrate_switch,
-                is_remote_frame=frame.is_remote_frame,
-            )
+        msg = can.Message(
+            arbitration_id=frame.arbitration_id,
+            data=frame.data,
+            is_extended_id=frame.is_extended_id,
+            is_fd=frame.is_fd,
+            bitrate_switch=frame.bitrate_switch,
+            is_remote_frame=frame.is_remote_frame,
         )
+        # A full TX queue is transient: the bus drains as frames get ACKed.
+        # Retry with short backoff instead of crashing the live thread.
+        last_exc: Exception | None = None
+        for attempt in range(8):
+            try:
+                self._inner.send(msg)
+                return
+            except can.CanError as exc:
+                last_exc = exc
+                text = str(exc).lower()
+                if "queue" not in text and "full" not in text and "buffer" not in text:
+                    raise BusError(str(exc)) from exc
+                self.tx_retries += 1
+                time.sleep(0.002 * (attempt + 1))
+        self.tx_dropped += 1
+        raise BusError(
+            f"transmission queue full on {self.name} after retries; "
+            f"dropped frame 0x{frame.arbitration_id:X}"
+        ) from last_exc
 
     def recv(self, timeout: float = 0.0) -> CanFrame | None:
         msg = self._inner.recv(timeout=timeout)
