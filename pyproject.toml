@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dbc-sim"
+version = "0.1.0"
+description = "Physical CAN and CAN-FD DBC simulator for PCAN and Vector adapters."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Kazktmr" }]
+dependencies = [
+    "cantools==39.4.5",
+    "python-can==4.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.4",
+    "pytest-html==4.1.1",
+]
+
+[project.scripts]
+dbc-sim = "dbc_sim.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --junitxml=reports/junit.xml"
+pythonpath = ["src"]
