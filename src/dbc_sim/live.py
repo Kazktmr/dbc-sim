@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Any
@@ -11,6 +12,8 @@ from dbc_sim.hardware import NullBus
 from dbc_sim.scheduler import ChannelRuntime
 from dbc_sim.session import Session
 from dbc_sim.status import signal_health
+
+log = logging.getLogger(__name__)
 
 
 _BACKEND_LABELS = {
@@ -160,6 +163,8 @@ class LiveEngine:
     def send_once(self, channel: str, message: str) -> None:
         rt = self._runtime(channel)
         frame = rt.send_event(message)
+        if frame is None:
+            return
         with self._lock:
             self._record(rt, frame)
 
@@ -202,11 +207,19 @@ class LiveEngine:
                     rt = self.session.runtimes.get(name)
                     if rt is None:
                         continue
-                    sent = rt.tick(sim)
+                    try:
+                        sent = rt.tick(sim)
+                    except Exception as exc:  # noqa: BLE001
+                        log.exception("tick failed on %s: %s", name, exc)
+                        sent = []
                     frames_by_rt.append((rt, sent))
                     if self.session.logger:
                         for frame in sent:
-                            self.session.logger.write(frame, "Tx")
+                            try:
+                                self.session.logger.write(frame, "Tx")
+                            except Exception as exc:  # noqa: BLE001
+                                log.warning("ASC write failed: %s", exc)
+                                break
                 with self._lock:
                     self.sim_s = sim
                     for rt, sent in frames_by_rt:
