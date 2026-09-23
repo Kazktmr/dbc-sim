@@ -1,7 +1,7 @@
 from dbc_sim.dbc.loader import load_dbc
 from dbc_sim.e2e import E2EState, crc8_sae_j1850, get_profile
 from dbc_sim.frames import BusKind, CanFrame, ChannelConfig
-from dbc_sim.hardware import NullBus
+from dbc_sim.hardware import BusError, NullBus, PythonCanBus, _is_transient_tx_error
 from dbc_sim.scheduler import ChannelRuntime
 from dbc_sim.status import Health, signal_health
 
@@ -70,3 +70,90 @@ def test_signal_health_colors():
     assert signal_health(50, 0, 100) is Health.HEALTHY
     assert signal_health(1, 0, 100) is Health.WARNING
     assert signal_health(120, 0, 100) is Health.FAULT
+
+
+def test_transient_tx_error_detection():
+    assert _is_transient_tx_error(RuntimeError("Failed to send: A transmission-queue is full"))
+    assert _is_transient_tx_error(RuntimeError("No buffer space available"))
+    assert not _is_transient_tx_error(RuntimeError("channel is closed"))
+
+
+class _AlwaysFull:
+    def send(self, msg):  # noqa: ANN001
+        raise RuntimeError("Failed to send: A transmission-queue is full")
+
+    def recv(self, timeout=0.0):  # noqa: ANN001
+        return None
+
+    def shutdown(self) -> None:
+        return None
+
+
+class _FlakyThenOk:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.sent = []
+
+    def send(self, msg):  # noqa: ANN001
+        self.calls += 1
+        if self.calls < 3:
+            raise RuntimeError("The transmission queue is full")
+        self.sent.append(msg)
+
+    def recv(self, timeout=0.0):  # noqa: ANN001
+        return None
+
+    def shutdown(self) -> None:
+        return None
+
+
+def test_python_can_bus_retries_then_succeeds():
+    cfg = ChannelConfig(name="powertrain", kind=BusKind.CAN)
+    inner = _FlakyThenOk()
+    bus = PythonCanBus(cfg, inner)
+    bus.send(CanFrame(arbitration_id=0x100, data=b"\x00" * 8))
+    assert inner.calls == 3
+    assert bus.tx_retries == 2
+    assert bus.tx_dropped == 0
+
+
+def test_python_can_bus_gives_up_after_retries():
+    cfg = ChannelConfig(name="powertrain", kind=BusKind.CAN)
+    bus = PythonCanBus(cfg, _AlwaysFull())
+    try:
+        bus.send(CanFrame(arbitration_id=0x100, data=b"\x00" * 8))
+        raise AssertionError("expected BusError")
+    except BusError as exc:
+        assert "after retries" in str(exc)
+    assert bus.tx_dropped == 1
+
+
+class _FailingBus:
+    def __init__(self, config: ChannelConfig) -> None:
+        self.config = config
+        self.name = config.name
+        self.kind = config.kind
+
+    def open(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+    def send(self, frame: CanFrame) -> None:
+        raise BusError("transmission queue full on powertrain after retries")
+
+    def recv(self, timeout: float = 0.0) -> CanFrame | None:
+        raise BusError("recv failed")
+
+
+def test_scheduler_survives_full_queue(demo_dbc_path):
+    db = load_dbc(demo_dbc_path)
+    cfg = ChannelConfig(name="powertrain", kind=BusKind.CAN)
+    rt = ChannelRuntime(cfg, db, _FailingBus(cfg))
+    rt.add_cyclic("EngineData")
+    sent = rt.tick(0.0)
+    assert sent == []
+    assert rt.status["EngineData"].tx_count == 0
+    assert rt.status["EngineData"].last_error
+    assert rt.status["EngineData"].health is Health.FAULT
