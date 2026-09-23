@@ -12,6 +12,14 @@ class BusError(RuntimeError):
     pass
 
 
+_TRANSIENT_TX = ("queue", "full", "buffer", "xmtfull", "qxmtfull", "no buffer space")
+
+
+def _is_transient_tx_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return any(token in text for token in _TRANSIENT_TX)
+
+
 class Bus(Protocol):
     name: str
     kind: BusKind
@@ -111,7 +119,10 @@ class PythonCanBus:
         return None
 
     def close(self) -> None:
-        self._inner.shutdown()
+        try:
+            self._inner.shutdown()
+        except Exception as exc:  # noqa: BLE001
+            raise BusError(f"failed to close {self.name}: {exc}") from exc
 
     def send(self, frame: CanFrame) -> None:
         import can
@@ -124,17 +135,14 @@ class PythonCanBus:
             bitrate_switch=frame.bitrate_switch,
             is_remote_frame=frame.is_remote_frame,
         )
-        # A full TX queue is transient: the bus drains as frames get ACKed.
-        # Retry with short backoff instead of crashing the live thread.
         last_exc: Exception | None = None
         for attempt in range(8):
             try:
                 self._inner.send(msg)
                 return
-            except can.CanError as exc:
+            except Exception as exc:  # noqa: BLE001
                 last_exc = exc
-                text = str(exc).lower()
-                if "queue" not in text and "full" not in text and "buffer" not in text:
+                if not _is_transient_tx_error(exc):
                     raise BusError(str(exc)) from exc
                 self.tx_retries += 1
                 time.sleep(0.002 * (attempt + 1))
@@ -145,7 +153,10 @@ class PythonCanBus:
         ) from last_exc
 
     def recv(self, timeout: float = 0.0) -> CanFrame | None:
-        msg = self._inner.recv(timeout=timeout)
+        try:
+            msg = self._inner.recv(timeout=timeout)
+        except Exception as exc:  # noqa: BLE001
+            raise BusError(f"recv failed on {self.name}: {exc}") from exc
         if msg is None:
             return None
         return CanFrame(
