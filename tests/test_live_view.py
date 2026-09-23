@@ -29,12 +29,15 @@ def test_live_engine_records_decoded_frames(demo_dbc_path):
     engine._thread.join(timeout=2)
     snap = engine.snapshot()
     assert snap["available_channels"] == ["powertrain"]
-    assert snap["frames"], "expected rolling history"
+    assert snap["frames"], "expected last-frame table"
+    names = [f["name"] for f in snap["frames"]]
+    assert len(names) == len(set(names))
     engine_frames = [f for f in snap["frames"] if f["name"] == "EngineData"]
-    assert engine_frames
-    last = engine_frames[-1]
+    assert len(engine_frames) == 1
+    last = engine_frames[0]
     assert last["hex"]
     assert "EngineSpeed" in last["signals"]
+    assert snap["hardware"]["label"].startswith("Null")
     status = snap["channels"][0]["messages"]
     engine_row = next(m for m in status if m["name"] == "EngineData")
     assert engine_row["tx_count"] > 0
@@ -67,6 +70,8 @@ def test_live_signal_and_e2e_edit(demo_dbc_path):
     row = next(m for m in snap["channels"][0]["messages"] if m["name"] == "EngineData")
     speed = next(s for s in row["signals"] if s["name"] == "EngineSpeed")
     assert speed["value"] == 2400.0
+    assert speed["min"] == 0
+    assert speed["max"] == 16383.75
     assert row["e2e"]["fault_crc"] is True
 
 
@@ -79,6 +84,7 @@ def test_http_state_and_signal_edit(demo_dbc_path):
         with urlopen(f"http://127.0.0.1:{port}/api/state") as resp:
             snap = json.loads(resp.read().decode())
         assert snap["available_channels"] == ["powertrain"]
+        assert "hardware" in snap
         payload = json.dumps(
             {"channel": "powertrain", "message": "EngineData", "signal": "EngineSpeed", "value": 1800}
         ).encode()
