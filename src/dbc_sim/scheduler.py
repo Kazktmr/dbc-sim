@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from dbc_sim.dbc.model import Database, Message
 from dbc_sim.e2e import E2EState, get_profile
 from dbc_sim.frames import BusKind, CanFrame, ChannelConfig
-from dbc_sim.hardware import Bus
+from dbc_sim.hardware import Bus, BusError
 from dbc_sim.status import MessageStatus
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -64,12 +67,14 @@ class ChannelRuntime:
             if not job.enabled or not job.cyclic:
                 continue
             if now_s + 1e-9 >= job.next_due_s:
-                sent.append(self._transmit(job))
+                frame = self._transmit(job)
+                if frame is not None:
+                    sent.append(frame)
                 job.next_due_s = now_s + job.period_s
         self._drain_rx(now_s)
         return sent
 
-    def _transmit(self, job: TxJob) -> CanFrame:
+    def _transmit(self, job: TxJob) -> CanFrame | None:
         raw = bytearray(job.message.encode(job.values))
         profile = get_profile(job.e2e.profile)
         protected = profile.protect(raw, job.message.e2e_data_id, job.e2e)
@@ -85,10 +90,17 @@ class ChannelRuntime:
             channel=self.config.name,
             timestamp=self._now,
         )
-        self.bus.send(frame)
+        try:
+            self.bus.send(frame)
+        except BusError as exc:
+            st = self.status[job.message.name]
+            st.last_error = str(exc)
+            log.warning("TX failed on %s %s: %s", self.config.name, job.message.name, exc)
+            return None
         st = self.status[job.message.name]
         st.tx_count += 1
         st.last_tx_s = self._now
+        st.last_error = None
         return frame
 
     def _drain_rx(self, now_s: float) -> None:
