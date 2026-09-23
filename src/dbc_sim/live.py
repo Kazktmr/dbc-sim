@@ -1,16 +1,26 @@
-"""Realtime session runner: paced ticks, pause, edits, rolling decode history."""
+"""Realtime session runner: paced ticks, pause, edits, last-frame-per-message view."""
 
 from __future__ import annotations
 
 import threading
 import time
-from collections import deque
 from typing import Any
 
 from dbc_sim.frames import CanFrame
+from dbc_sim.hardware import NullBus
 from dbc_sim.scheduler import ChannelRuntime
 from dbc_sim.session import Session
 from dbc_sim.status import signal_health
+
+
+_BACKEND_LABELS = {
+    "null": "Null loopback - no adapter",
+    "loopback": "Null loopback - no adapter",
+    "dry-run": "Null loopback - no adapter",
+    "pcan": "PCAN-USB",
+    "vector": "Vector",
+    "socketcan": "SocketCAN",
+}
 
 
 def _round_value(value: float) -> float:
@@ -19,6 +29,49 @@ def _round_value(value: float) -> float:
     if abs(value) >= 1:
         return round(value, 3)
     return round(value, 5)
+
+
+def _signal_step(scale: float, minimum: float | None, maximum: float | None) -> float:
+    step = abs(scale) if scale else 1.0
+    if minimum is not None and maximum is not None and maximum > minimum:
+        span = maximum - minimum
+        if span / step > 2000:
+            step = span / 1000.0
+    return step
+
+
+def _hardware_view(session: Session) -> dict[str, Any]:
+    backend = session.backend
+    channels = []
+    ready = True
+    for name, rt in session.runtimes.items():
+        bus = rt.bus
+        opened = bool(getattr(bus, "opened", True))
+        is_null = isinstance(bus, NullBus)
+        ready = ready and opened
+        channels.append(
+            {
+                "name": name,
+                "kind": rt.config.kind.value,
+                "interface": "null" if is_null else rt.config.interface,
+                "device": None if is_null else rt.config.channel,
+                "bitrate": rt.config.bitrate,
+                "ready": opened,
+            }
+        )
+    if backend in {"null", "loopback", "dry-run"}:
+        detail = "Simulated bus. Use --backend pcan or --backend vector with an adapter."
+    elif ready:
+        detail = "Adapter open."
+    else:
+        detail = "Adapter not ready."
+    return {
+        "backend": backend,
+        "label": _BACKEND_LABELS.get(backend, backend),
+        "ready": ready,
+        "detail": detail,
+        "channels": channels,
+    }
 
 
 class LiveEngine:
@@ -38,7 +91,7 @@ class LiveEngine:
         self.paused = False
         self.running = False
         self.sim_s = 0.0
-        self.frames: deque[dict[str, Any]] = deque(maxlen=history)
+        self.latest_frames: dict[tuple[str, str], dict[str, Any]] = {}
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._seq = 0
@@ -79,8 +132,7 @@ class LiveEngine:
         job = rt.jobs.get(message)
         if job is None:
             job = rt.add_cyclic(message)
-        msg = job.message
-        sig = msg.signal(signal)
+        sig = job.message.signal(signal)
         job.values[signal] = float(value)
         if sig.minimum is not None and job.values[signal] < sig.minimum:
             job.values[signal] = sig.minimum
@@ -114,12 +166,13 @@ class LiveEngine:
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             channels = [self._channel_view(name) for name in self.session.runtimes]
-            frames = list(self.frames)
+            frames = sorted(self.latest_frames.values(), key=lambda row: (row["channel"], row["id"]))
             return {
                 "sim_s": round(self.sim_s, 3),
                 "paused": self.paused,
                 "running": self.running,
                 "backend": self.session.backend,
+                "hardware": _hardware_view(self.session),
                 "active_channels": list(self.active_channels),
                 "available_channels": list(self.session.runtimes),
                 "channels": channels,
@@ -192,7 +245,7 @@ class LiveEngine:
             "len": len(frame.data),
             "signals": decoded,
         }
-        self.frames.append(row)
+        self.latest_frames[(rt.config.name, name)] = row
         self.last_decode[(rt.config.name, name)] = decoded
 
     def _trim_null_buses(self) -> None:
@@ -223,6 +276,9 @@ class LiveEngine:
                         "unit": sig.unit,
                         "min": sig.minimum,
                         "max": sig.maximum,
+                        "scale": sig.scale,
+                        "step": _signal_step(sig.scale, sig.minimum, sig.maximum),
+                        "bit_length": sig.length,
                         "health": health.value,
                     }
                 )
