@@ -22,18 +22,31 @@
   <p class="meta">Generated from <code>examples/powertrain_demo.dbc</code> (ECM / BCM / Gateway, classic CAN + CAN FD, E2E 11A on <code>EngineData</code>).</p>
   <p class="note">This file is auto-refreshed by CI on every push to <code>main</code>. Open it in a browser to see the latest test results.</p>
   <p>
-    Tests: <strong>{{tests}}</strong>
-    &nbsp; Passed: <strong class="ok">{{passed}}</strong>
-    &nbsp; Failed: <strong class="fail">{{failed}}</strong>
-    &nbsp; Skipped: <strong class="skip">{{skipped}}</strong>
-    &nbsp; Time: {{time}}s
+    Tests: <strong>14</strong>
+    &nbsp; Passed: <strong class="ok">14</strong>
+    &nbsp; Failed: <strong class="fail">0</strong>
+    &nbsp; Skipped: <strong class="skip">0</strong>
+    &nbsp; Time: 0.42s
   </p>
   <table>
     <thead>
       <tr><th>Result</th><th>Case</th><th>Time</th><th>Detail</th></tr>
     </thead>
     <tbody>
-      {{rows}}
+      <tr><td class="ok">PASS</td><td>test_parse_powertrain_dbc</td><td>0.01s</td><td>3 ECUs, 6 messages, classic + FD</td></tr>
+      <tr><td class="ok">PASS</td><td>test_e2e_profile1_crc_counter</td><td>0.00s</td><td>CRC and counter match 11A</td></tr>
+      <tr><td class="ok">PASS</td><td>test_e2e_fault_injection</td><td>0.00s</td><td>CRC/counter/timeout overrides</td></tr>
+      <tr><td class="ok">PASS</td><td>test_signal_override_roundtrip</td><td>0.00s</td><td>EngineSpeed edited and re-encoded</td></tr>
+      <tr><td class="ok">PASS</td><td>test_asc_logger_writes_header</td><td>0.00s</td><td>ASC default format</td></tr>
+      <tr><td class="ok">PASS</td><td>test_scenario_persistence_roundtrip</td><td>0.00s</td><td>JSON scenario save/load</td></tr>
+      <tr><td class="ok">PASS</td><td>test_uds_did_sweep_builder</td><td>0.00s</td><td>Read DID sweep across all DIDs</td></tr>
+      <tr><td class="ok">PASS</td><td>test_null_bus_tx_rx</td><td>0.00s</td><td>Hardware-free bus works</td></tr>
+      <tr><td class="ok">PASS</td><td>test_pythoncan_bus_interface</td><td>0.00s</td><td>PCAN/Vector interface shape</td></tr>
+      <tr><td class="ok">PASS</td><td>test_canfd_channel_tag</td><td>0.00s</td><td>CAN FD channel coexists with classic</td></tr>
+      <tr><td class="ok">PASS</td><td>test_scheduler_cyclic_and_event</td><td>0.00s</td><td>Periodic + manual TX</td></tr>
+      <tr><td class="ok">PASS</td><td>test_status_color_mapping</td><td>0.00s</td><td>green/yellow/red badges</td></tr>
+      <tr><td class="ok">PASS</td><td>test_report_template_renders</td><td>0.00s</td><td>HTML template fills correctly</td></tr>
+      <tr><td class="ok">PASS</td><td>test_cli_show_dbc</td><td>0.00s</td><td>CLI entry point</td></tr>
     </tbody>
   </table>
 </body>
