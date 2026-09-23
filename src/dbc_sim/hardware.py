@@ -1,0 +1,138 @@
+"""Swappable physical bus. Tests use NullBus; PCAN/Vector plug in later via python-can."""
+
+from __future__ import annotations
+
+from typing import Protocol
+
+from dbc_sim.frames import BusKind, CanFrame, ChannelConfig
+
+
+class BusError(RuntimeError):
+    pass
+
+
+class Bus(Protocol):
+    name: str
+    kind: BusKind
+
+    def open(self) -> None: ...
+
+    def close(self) -> None: ...
+
+    def send(self, frame: CanFrame) -> None: ...
+
+    def recv(self, timeout: float = 0.0) -> CanFrame | None: ...
+
+
+class NullBus:
+    """In-process loopback used by unit tests and dry runs."""
+
+    def __init__(self, config: ChannelConfig) -> None:
+        self.config = config
+        self.name = config.name
+        self.kind = config.kind
+        self.tx: list[CanFrame] = []
+        self._rx: list[CanFrame] = []
+        self.opened = False
+
+    def open(self) -> None:
+        self.opened = True
+
+    def close(self) -> None:
+        self.opened = False
+
+    def send(self, frame: CanFrame) -> None:
+        if not self.opened:
+            raise BusError(f"channel {self.name} is closed")
+        if self.kind is BusKind.CAN and frame.is_fd:
+            raise BusError(f"channel {self.name} is classic CAN; refused FD frame 0x{frame.arbitration_id:X}")
+        if self.kind is BusKind.CAN and len(frame.data) > 8:
+            raise BusError("classic CAN payload too long")
+        self.tx.append(frame)
+        self._rx.append(frame)
+
+    def recv(self, timeout: float = 0.0) -> CanFrame | None:
+        if not self._rx:
+            return None
+        return self._rx.pop(0)
+
+    def inject(self, frame: CanFrame) -> None:
+        self._rx.append(frame)
+
+
+def open_bus(config: ChannelConfig, backend: str = "null") -> Bus:
+    backend = backend.lower()
+    if backend in {"null", "loopback", "dry-run"}:
+        bus = NullBus(config)
+        bus.open()
+        return bus
+    if backend in {"pcan", "vector", "socketcan"}:
+        return _open_python_can(config, backend)
+    raise BusError(f"unknown backend {backend!r}")
+
+
+def _open_python_can(config: ChannelConfig, backend: str) -> Bus:
+    try:
+        import can  # type: ignore
+    except ImportError as exc:
+        raise BusError("python-can is not installed. pip install -e .") from exc
+
+    kwargs: dict = {
+        "interface": backend,
+        "channel": config.channel,
+        "bitrate": config.bitrate,
+        "fd": config.kind is BusKind.CANFD,
+    }
+    if config.kind is BusKind.CANFD and config.data_bitrate:
+        kwargs["data_bitrate"] = config.data_bitrate
+    try:
+        bus = can.Bus(**kwargs)
+    except Exception as exc:  # noqa: BLE001
+        raise BusError(
+            f"could not open {backend} {config.channel}. "
+            "Install the vendor driver and confirm the interface name."
+        ) from exc
+    return PythonCanBus(config, bus)
+
+
+class PythonCanBus:
+    def __init__(self, config: ChannelConfig, inner) -> None:
+        self.config = config
+        self.name = config.name
+        self.kind = config.kind
+        self._inner = inner
+
+    def open(self) -> None:
+        return None
+
+    def close(self) -> None:
+        self._inner.shutdown()
+
+    def send(self, frame: CanFrame) -> None:
+        import can
+
+        self._inner.send(
+            can.Message(
+                arbitration_id=frame.arbitration_id,
+                data=frame.data,
+                is_extended_id=frame.is_extended_id,
+                is_fd=frame.is_fd,
+                bitrate_switch=frame.bitrate_switch,
+                is_remote_frame=frame.is_remote_frame,
+            )
+        )
+
+    def recv(self, timeout: float = 0.0) -> CanFrame | None:
+        msg = self._inner.recv(timeout=timeout)
+        if msg is None:
+            return None
+        return CanFrame(
+            arbitration_id=msg.arbitration_id,
+            data=bytes(msg.data),
+            is_extended_id=msg.is_extended_id,
+            is_fd=bool(getattr(msg, "is_fd", False)),
+            bitrate_switch=bool(getattr(msg, "bitrate_switch", False)),
+            is_remote_frame=msg.is_remote_frame,
+            channel=self.name,
+            timestamp=getattr(msg, "timestamp", None),
+        )
