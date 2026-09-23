@@ -53,7 +53,7 @@ class ChannelRuntime:
     def set_signal(self, message_name: str, signal_name: str, value: float) -> None:
         self.jobs[message_name].values[signal_name] = value
 
-    def send_event(self, message_name: str) -> CanFrame:
+    def send_event(self, message_name: str) -> CanFrame | None:
         job = self.jobs.get(message_name)
         if job is None:
             job = self.add_cyclic(message_name)
@@ -100,12 +100,16 @@ class ChannelRuntime:
         st = self.status[job.message.name]
         st.tx_count += 1
         st.last_tx_s = self._now
-        st.last_error = None
+        st.last_error = ""
         return frame
 
     def _drain_rx(self, now_s: float) -> None:
         while True:
-            frame = self.bus.recv(timeout=0.0)
+            try:
+                frame = self.bus.recv(timeout=0.0)
+            except BusError as exc:
+                log.warning("RX failed on %s: %s", self.config.name, exc)
+                break
             if frame is None:
                 break
             try:
@@ -125,6 +129,3 @@ class ChannelRuntime:
                 st.e2e_ok = ok
                 if not ok:
                     st.last_error = "e2e"
-            cycle = msg.cycle_time_ms or 0
-            if cycle and st.last_rx_s is not None and st.last_tx_s is not None:
-                pass
