@@ -32,17 +32,23 @@
     .signals { color: #cfc; font-size: 0.78rem; }
     .edit { margin-top: 1rem; padding: 0.8rem; background: #161616; border: 1px solid var(--line); border-radius: 8px; }
     .edit h3 { margin: 0 0 0.6rem; font-size: 0.95rem; }
-    label { display: block; font-size: 0.8rem; color: var(--muted); margin: 0.35rem 0 0.15rem; }
-    input[type=number] { width: 100%; background: #111; color: var(--text); border: 1px solid #333; border-radius: 6px; padding: 0.3rem 0.45rem; font: inherit; }
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin: 0.45rem 0 0.15rem; }
+    input[type=number] { width: 7.2rem; background: #111; color: var(--text); border: 1px solid #333; border-radius: 6px; padding: 0.3rem 0.45rem; font: inherit; }
+    input[type=range] { flex: 1; min-width: 8rem; }
+    .sig-row { display: flex; gap: 0.55rem; align-items: center; }
     .row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
     .check { color: var(--text); font-size: 0.85rem; display: flex; gap: 0.35rem; align-items: center; margin-right: 0.7rem; }
     .empty { color: var(--muted); padding: 0.6rem 0; }
+    .hw { font-size: 0.82rem; }
+    .hw.ready { color: var(--green); }
+    .hw.sim { color: var(--yellow); }
   </style>
 </head>
 <body>
   <header>
     <h1>dbc-sim live</h1>
-    <div class="meta" id="banner">connecting…</div>
+    <div class="meta" id="banner">connecting...</div>
+    <div class="hw" id="hardware"></div>
     <div class="row">
       <button id="btn-pause" type="button">Pause TX</button>
       <button id="btn-resume" type="button">Resume</button>
@@ -62,7 +68,7 @@
       </div>
     </section>
     <section>
-      <h2>Last frames</h2>
+      <h2>Last frame per message</h2>
       <table>
         <thead><tr><th>t</th><th>ID</th><th>Name</th><th>Raw / decoded</th></tr></thead>
         <tbody id="frame-body"></tbody>
@@ -96,7 +102,11 @@
     function renderBanner(data) {
       const mode = data.paused ? "paused" : (data.running ? "TX active" : "stopped");
       const chans = (data.active_channels || []).join(", ");
-      $("banner").textContent = `${mode} · t=${data.sim_s}s · backend=${data.backend} · channel=${chans}`;
+      $("banner").textContent = `${mode} · t=${data.sim_s}s · channel=${chans}`;
+      const hw = data.hardware || {};
+      const el = $("hardware");
+      el.textContent = `Hardware: ${hw.label || data.backend || "unknown"}` + (hw.detail ? ` — ${hw.detail}` : "");
+      el.className = "hw " + ((hw.backend === "null" || hw.backend === "loopback") ? "sim" : (hw.ready ? "ready" : "sim"));
       const sel = $("channel-select");
       const current = sel.value;
       sel.innerHTML = "";
@@ -118,13 +128,26 @@
         for (const msg of ch.messages || []) {
           const tr = document.createElement("tr");
           if (selected && selected.channel === ch.name && selected.message === msg.name) tr.classList.add("selected");
-          const age = msg.tx_age_s == null ? "—" : msg.tx_age_s.toFixed(3) + "s";
-          const e2e = msg.e2e && msg.e2e.profile && msg.e2e.profile !== "none" ? (msg.e2e_ok ? "ok" : "FAULT") : "—";
+          const age = msg.tx_age_s == null ? "-" : msg.tx_age_s.toFixed(3) + "s";
+          const e2e = msg.e2e && msg.e2e.profile && msg.e2e.profile !== "none" ? (msg.e2e_ok ? "ok" : "FAULT") : "-";
           tr.innerHTML = `<td>${colorDot(msg.color)}</td><td>${msg.name}<div class="meta">${ch.name}${msg.fd ? " · FD" : ""}</div></td><td class="hex">${msg.id_hex}</td><td>${msg.tx_count}</td><td>${age}</td><td>${e2e}</td>`;
           tr.addEventListener("click", () => { selected = { channel: ch.name, message: msg.name }; renderEditor(data); renderStatus(data); });
           body.appendChild(tr);
         }
       }
+    }
+
+    function signalControl(sig) {
+      const unit = sig.unit ? ` ${sig.unit}` : "";
+      const hasRange = sig.min != null && sig.max != null && Number(sig.max) > Number(sig.min);
+      const step = sig.step != null ? sig.step : "any";
+      const bounds = hasRange ? `DBC ${sig.min} … ${sig.max}${unit}` : (unit ? unit.trim() : "no DBC range");
+      const slider = hasRange
+        ? `<input type="range" data-signal="${sig.name}" min="${sig.min}" max="${sig.max}" step="${step}" value="${sig.value}">`
+        : "";
+      return `<label>${sig.name} <span class="meta">${bounds}</span>
+        <div class="sig-row">${slider}<input type="number" data-signal="${sig.name}" min="${sig.min ?? ""}" max="${sig.max ?? ""}" step="${step}" value="${sig.value}"></div>
+      </label>`;
     }
 
     function renderEditor(data) {
@@ -140,11 +163,7 @@
       if (!msg) return;
       title.textContent = `${msg.name}  ${msg.id_hex}`;
       box.className = "";
-      const signalRows = (msg.signals || []).map((sig) => {
-        const unit = sig.unit ? ` ${sig.unit}` : "";
-        const bounds = (sig.min != null && sig.max != null) ? `  [${sig.min} … ${sig.max}]` : "";
-        return `<label>${sig.name}${unit}<span class="meta">${bounds}</span><input type="number" step="any" data-signal="${sig.name}" value="${sig.value}"></label>`;
-      }).join("");
+      const signalRows = (msg.signals || []).map(signalControl).join("");
       const e2eBlock = (msg.e2e && msg.e2e.profile && msg.e2e.profile !== "none")
         ? `<div class="row" style="margin-top:0.6rem">
             <label class="check"><input type="checkbox" data-e2e="fault_crc" ${msg.e2e.fault_crc ? "checked" : ""}> Corrupt CRC</label>
@@ -154,7 +173,16 @@
         : `<div class="meta" style="margin-top:0.5rem">No E2E on this message.</div>`;
       box.innerHTML = `<label class="check"><input type="checkbox" id="cyclic-enabled" ${msg.cyclic ? "checked" : ""}> Cyclic TX</label>${signalRows}${e2eBlock}<div class="row" style="margin-top:0.7rem"><button type="button" id="btn-send">Send once</button></div>`;
       box.querySelectorAll("input[data-signal]").forEach((el) => {
-        el.addEventListener("change", () => post("/api/signal", { channel: selected.channel, message: selected.message, signal: el.dataset.signal, value: Number(el.value) }));
+        const apply = () => {
+          const name = el.dataset.signal;
+          box.querySelectorAll(`input[data-signal="${name}"]`).forEach((other) => { other.value = el.value; });
+          post("/api/signal", { channel: selected.channel, message: selected.message, signal: name, value: Number(el.value) });
+        };
+        el.addEventListener("change", apply);
+        if (el.type === "range") el.addEventListener("input", () => {
+          const name = el.dataset.signal;
+          box.querySelectorAll(`input[data-signal="${name}"]`).forEach((other) => { other.value = el.value; });
+        });
       });
       box.querySelectorAll("input[data-e2e]").forEach((el) => {
         el.addEventListener("change", () => {
@@ -174,12 +202,12 @@
       lastSeq = data.seq;
       const body = $("frame-body");
       body.innerHTML = "";
-      for (const fr of (data.frames || []).slice().reverse()) {
+      for (const fr of data.frames || []) {
         const parts = Object.entries(fr.signals || {})
           .filter(([name]) => !["Checksum", "Counter", "ReservedNibble", "Reserved1", "IsoTp"].includes(name))
           .map(([name, val]) => `${name}=${val}`).join("  ");
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td class="meta">${fr.t.toFixed(3)}</td><td class="hex">${fr.id_hex}${fr.fd ? " FD" : ""}</td><td>${fr.name}</td><td><div class="hex">${fr.hex}</div><div class="signals">${parts}</div></td>`;
+        tr.innerHTML = `<td class="meta">${Number(fr.t).toFixed(3)}</td><td class="hex">${fr.id_hex}${fr.fd ? " FD" : ""}</td><td>${fr.name}</td><td><div class="hex">${fr.hex}</div><div class="signals">${parts}</div></td>`;
         body.appendChild(tr);
       }
     }
@@ -204,7 +232,7 @@
       try {
         const res = await fetch("/api/state");
         state = await res.json();
-        render(selected !== null);
+        render(false);
       } catch (err) {
         $("banner").textContent = "server disconnected";
       }
