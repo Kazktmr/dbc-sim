@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>dbc-sim live</title>
+  <style>
+    :root {
+      --bg: #111; --panel: #1a1a1a; --line: #2a2a2a; --text: #eee; --muted: #9aa;
+      --green: #3dd68c; --yellow: #f5c542; --red: #ff6b6b; --gray: #6b7280; --accent: #7aa2ff;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    header { display: flex; flex-wrap: wrap; gap: 0.75rem 1.2rem; align-items: center; padding: 0.85rem 1.1rem; border-bottom: 1px solid var(--line); background: var(--panel); }
+    h1 { font-size: 1.05rem; margin: 0; font-weight: 650; }
+    .meta { color: var(--muted); font-size: 0.85rem; }
+    .dot { width: 0.65rem; height: 0.65rem; border-radius: 50%; display: inline-block; margin-right: 0.35rem; }
+    .dot.green { background: var(--green); } .dot.yellow { background: var(--yellow); }
+    .dot.red { background: var(--red); } .dot.gray { background: var(--gray); }
+    button, select { background: #222; color: var(--text); border: 1px solid #333; border-radius: 6px; padding: 0.35rem 0.7rem; cursor: pointer; font: inherit; }
+    button:hover { border-color: #555; }
+    main { display: grid; grid-template-columns: minmax(320px, 1.1fr) minmax(320px, 1fr); min-height: calc(100vh - 58px); }
+    @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+    section { padding: 0.9rem 1.1rem 1.4rem; }
+    section + section { border-left: 1px solid var(--line); }
+    h2 { font-size: 0.82rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); margin: 0 0 0.7rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+    th { text-align: left; color: var(--muted); font-weight: 600; padding: 0.28rem 0.35rem; border-bottom: 1px solid var(--line); }
+    td { padding: 0.32rem 0.35rem; border-bottom: 1px solid #222; vertical-align: top; }
+    tr.selected td { background: #1e2430; }
+    .hex { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
+    .signals { color: #cfc; font-size: 0.78rem; }
+    .edit { margin-top: 1rem; padding: 0.8rem; background: #161616; border: 1px solid var(--line); border-radius: 8px; }
+    .edit h3 { margin: 0 0 0.6rem; font-size: 0.95rem; }
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin: 0.35rem 0 0.15rem; }
+    input[type=number] { width: 100%; background: #111; color: var(--text); border: 1px solid #333; border-radius: 6px; padding: 0.3rem 0.45rem; font: inherit; }
+    .row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+    .check { color: var(--text); font-size: 0.85rem; display: flex; gap: 0.35rem; align-items: center; margin-right: 0.7rem; }
+    .empty { color: var(--muted); padding: 0.6rem 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>dbc-sim live</h1>
+    <div class="meta" id="banner">connecting…</div>
+    <div class="row">
+      <button id="btn-pause" type="button">Pause TX</button>
+      <button id="btn-resume" type="button">Resume</button>
+      <label class="check">Channel <select id="channel-select"></select></label>
+    </div>
+  </header>
+  <main>
+    <section>
+      <h2>Status</h2>
+      <table>
+        <thead><tr><th></th><th>Message</th><th>ID</th><th>TX</th><th>Age</th><th>E2E</th></tr></thead>
+        <tbody id="status-body"></tbody>
+      </table>
+      <div class="edit" id="editor">
+        <h3 id="editor-title">Select a message</h3>
+        <div id="editor-body" class="empty">Click a row to edit signals or inject E2E faults. Changes apply to the next TX.</div>
+      </div>
+    </section>
+    <section>
+      <h2>Last frames</h2>
+      <table>
+        <thead><tr><th>t</th><th>ID</th><th>Name</th><th>Raw / decoded</th></tr></thead>
+        <tbody id="frame-body"></tbody>
+      </table>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let state = null;
+    let selected = null;
+    let lastSeq = -1;
+    const colorDot = (color) => `<span class="dot ${color}"></span>`;
+
+    async function post(path, body) {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {})
+      });
+      state = await res.json();
+      if (state.error) { console.warn(state.error); return; }
+      render(false);
+    }
+
+    function findMessage(data, channel, name) {
+      const ch = (data.channels || []).find((c) => c.name === channel);
+      if (!ch) return null;
+      return (ch.messages || []).find((m) => m.name === name) || null;
+    }
+
+    function renderBanner(data) {
+      const mode = data.paused ? "paused" : (data.running ? "TX active" : "stopped");
+      const chans = (data.active_channels || []).join(", ");
+      $("banner").textContent = `${mode} · t=${data.sim_s}s · backend=${data.backend} · channel=${chans}`;
+      const sel = $("channel-select");
+      const current = sel.value;
+      sel.innerHTML = "";
+      for (const name of ["all", ...(data.available_channels || [])]) {
+        const opt = document.createElement("option");
+        opt.value = name; opt.textContent = name; sel.appendChild(opt);
+      }
+      if (data.active_channels && data.active_channels.length > 1) sel.value = "all";
+      else if (data.active_channels && data.active_channels[0]) sel.value = data.active_channels[0];
+      else if (current) sel.value = current;
+    }
+
+    function renderStatus(data) {
+      const body = $("status-body");
+      body.innerHTML = "";
+      const active = new Set(data.active_channels || []);
+      for (const ch of data.channels || []) {
+        if (active.size && !active.has(ch.name)) continue;
+        for (const msg of ch.messages || []) {
+          const tr = document.createElement("tr");
+          if (selected && selected.channel === ch.name && selected.message === msg.name) tr.classList.add("selected");
+          const age = msg.tx_age_s == null ? "—" : msg.tx_age_s.toFixed(3) + "s";
+          const e2e = msg.e2e && msg.e2e.profile && msg.e2e.profile !== "none" ? (msg.e2e_ok ? "ok" : "FAULT") : "—";
+          tr.innerHTML = `<td>${colorDot(msg.color)}</td><td>${msg.name}<div class="meta">${ch.name}${msg.fd ? " · FD" : ""}</div></td><td class="hex">${msg.id_hex}</td><td>${msg.tx_count}</td><td>${age}</td><td>${e2e}</td>`;
+          tr.addEventListener("click", () => { selected = { channel: ch.name, message: msg.name }; renderEditor(data); renderStatus(data); });
+          body.appendChild(tr);
+        }
+      }
+    }
+
+    function renderEditor(data) {
+      const title = $("editor-title");
+      const box = $("editor-body");
+      if (!selected) {
+        title.textContent = "Select a message";
+        box.className = "empty";
+        box.textContent = "Click a row to edit signals or inject E2E faults. Changes apply to the next TX.";
+        return;
+      }
+      const msg = findMessage(data, selected.channel, selected.message);
+      if (!msg) return;
+      title.textContent = `${msg.name}  ${msg.id_hex}`;
+      box.className = "";
+      const signalRows = (msg.signals || []).map((sig) => {
+        const unit = sig.unit ? ` ${sig.unit}` : "";
+        const bounds = (sig.min != null && sig.max != null) ? `  [${sig.min} … ${sig.max}]` : "";
+        return `<label>${sig.name}${unit}<span class="meta">${bounds}</span><input type="number" step="any" data-signal="${sig.name}" value="${sig.value}"></label>`;
+      }).join("");
+      const e2eBlock = (msg.e2e && msg.e2e.profile && msg.e2e.profile !== "none")
+        ? `<div class="row" style="margin-top:0.6rem">
+            <label class="check"><input type="checkbox" data-e2e="fault_crc" ${msg.e2e.fault_crc ? "checked" : ""}> Corrupt CRC</label>
+            <label class="check"><input type="checkbox" data-e2e="fault_freeze_counter" ${msg.e2e.fault_freeze_counter ? "checked" : ""}> Freeze counter</label>
+            <label class="check"><input type="checkbox" data-e2e="fault_skip_counter" ${msg.e2e.fault_skip_counter ? "checked" : ""}> Skip counter</label>
+          </div>`
+        : `<div class="meta" style="margin-top:0.5rem">No E2E on this message.</div>`;
+      box.innerHTML = `<label class="check"><input type="checkbox" id="cyclic-enabled" ${msg.cyclic ? "checked" : ""}> Cyclic TX</label>${signalRows}${e2eBlock}<div class="row" style="margin-top:0.7rem"><button type="button" id="btn-send">Send once</button></div>`;
+      box.querySelectorAll("input[data-signal]").forEach((el) => {
+        el.addEventListener("change", () => post("/api/signal", { channel: selected.channel, message: selected.message, signal: el.dataset.signal, value: Number(el.value) }));
+      });
+      box.querySelectorAll("input[data-e2e]").forEach((el) => {
+        el.addEventListener("change", () => {
+          const payload = { channel: selected.channel, message: selected.message };
+          payload[el.dataset.e2e] = el.checked;
+          post("/api/e2e", payload);
+        });
+      });
+      const cyclic = box.querySelector("#cyclic-enabled");
+      if (cyclic) cyclic.addEventListener("change", () => post("/api/cyclic", { channel: selected.channel, message: selected.message, enabled: cyclic.checked }));
+      const send = box.querySelector("#btn-send");
+      if (send) send.addEventListener("click", () => post("/api/send", { channel: selected.channel, message: selected.message }));
+    }
+
+    function renderFrames(data) {
+      if (data.seq === lastSeq) return;
+      lastSeq = data.seq;
+      const body = $("frame-body");
+      body.innerHTML = "";
+      for (const fr of (data.frames || []).slice().reverse()) {
+        const parts = Object.entries(fr.signals || {})
+          .filter(([name]) => !["Checksum", "Counter", "ReservedNibble", "Reserved1", "IsoTp"].includes(name))
+          .map(([name, val]) => `${name}=${val}`).join("  ");
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td class="meta">${fr.t.toFixed(3)}</td><td class="hex">${fr.id_hex}${fr.fd ? " FD" : ""}</td><td>${fr.name}</td><td><div class="hex">${fr.hex}</div><div class="signals">${parts}</div></td>`;
+        body.appendChild(tr);
+      }
+    }
+
+    function render(refreshEditor) {
+      if (!state || state.error) return;
+      renderBanner(state);
+      renderStatus(state);
+      renderFrames(state);
+      if (refreshEditor) renderEditor(state);
+    }
+
+    $("btn-pause").addEventListener("click", () => post("/api/pause", {}));
+    $("btn-resume").addEventListener("click", () => post("/api/resume", {}));
+    $("channel-select").addEventListener("change", (ev) => {
+      const value = ev.target.value;
+      const channels = value === "all" ? (state.available_channels || []) : [value];
+      post("/api/channel", { channels });
+    });
+
+    async function poll() {
+      try {
+        const res = await fetch("/api/state");
+        state = await res.json();
+        render(selected !== null);
+      } catch (err) {
+        $("banner").textContent = "server disconnected";
+      }
+    }
+    poll();
+    setInterval(poll, 250);
+  </script>
+</body>
+</html>
