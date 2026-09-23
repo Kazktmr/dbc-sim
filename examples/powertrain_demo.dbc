@@ -1,0 +1,98 @@
+VERSION "dbc-sim-0.1"
+
+NS_ :
+	NS_DESC_
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	CAT_DEF_
+	CAT_
+	FILTER
+	BA_DEF_DEF_
+	EV_DATA_
+	ENVVAR_DATA_
+	SGTYPE_
+	SGTYPE_VAL_
+	BA_DEF_SGTYPE_
+	BA_SGTYPE_
+	SIG_TYPE_REF_
+	VAL_TABLE_
+	SIG_GROUP_
+	SIG_VALTYPE_
+	SIGTYPE_VALTYPE_
+	BO_TX_BU_
+	BA_DEF_REL_
+	BA_REL_
+	BA_DEF_DEF_REL_
+	BU_SG_REL_
+	BU_EV_REL_
+	BU_BO_REL_
+	SG_MUL_VAL_
+
+BS_:
+
+BU_: ECM BCM Gateway Tester
+
+BO_ 256 EngineData: 8 ECM
+ SG_ Checksum : 0|8@1+ (1,0) [0|255] "" Gateway,BCM
+ SG_ Counter : 8|4@1+ (1,0) [0|14] "" Gateway,BCM
+ SG_ ReservedNibble : 12|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ EngineSpeed : 16|16@1+ (0.25,0) [0|16383.75] "rpm" Gateway,BCM
+ SG_ CoolantTemp : 32|8@1+ (1,-40) [-40|215] "degC" Gateway,BCM
+ SG_ AcceleratorPedal : 40|8@1+ (0.4,0) [0|100] "%" Gateway
+ SG_ EngineRunning : 48|1@1+ (1,0) [0|1] "" Gateway,BCM
+ SG_ MilOn : 49|1@1+ (1,0) [0|1] "" BCM
+
+BO_ 512 VehicleSpeed: 8 BCM
+ SG_ VehicleSpeed : 0|16@1+ (0.01,0) [0|655.35] "km/h" ECM,Gateway
+ SG_ SpeedValid : 16|1@1+ (1,0) [0|1] "" ECM
+ SG_ Reserved1 : 17|15@1+ (1,0) [0|32767] "" Vector__XXX
+
+BO_ 768 ChassisStatus: 16 Gateway
+ SG_ YawRate : 0|16@1- (0.01,0) [-327.68|327.67] "deg/s" BCM
+ SG_ LatAccel : 16|16@1- (0.001,0) [-32.768|32.767] "g" BCM
+ SG_ SteerAngle : 32|16@1- (0.1,0) [-3270.4|3270.3] "deg" BCM
+ SG_ WheelFL : 48|16@1+ (0.01,0) [0|655.35] "km/h" BCM
+ SG_ WheelFR : 64|16@1+ (0.01,0) [0|655.35] "km/h" BCM
+ SG_ WheelRL : 80|16@1+ (0.01,0) [0|655.35] "km/h" BCM
+ SG_ WheelRR : 96|16@1+ (0.01,0) [0|655.35] "km/h" BCM
+
+BO_ 1024 LampCommand: 8 Tester
+ SG_ LowBeam : 0|1@1+ (1,0) [0|1] "" BCM
+ SG_ HighBeam : 1|1@1+ (1,0) [0|1] "" BCM
+ SG_ Hazard : 2|1@1+ (1,0) [0|1] "" BCM
+
+BO_ 2016 DiagRequest: 8 Tester
+ SG_ IsoTp : 0|64@1+ (1,0) [0|0] "" ECM
+
+BO_ 2024 DiagResponse: 8 ECM
+ SG_ IsoTp : 0|64@1+ (1,0) [0|0] "" Tester
+
+CM_ BO_ 256 "ECM cyclic powertrain status with E2E Profile 1 / 11A on byte0 CRC and byte1 counter.";
+CM_ BO_ 512 "BCM vehicle speed, classic CAN.";
+CM_ BO_ 768 "Gateway chassis sample, CAN FD 16-byte payload.";
+CM_ BO_ 1024 "Event / tester override lamps.";
+CM_ BO_ 2016 "UDS request ID 0x7E0.";
+CM_ BO_ 2024 "UDS response ID 0x7E8.";
+
+BA_DEF_ BO_  "GenMsgCycleTime" INT 0 60000;
+BA_DEF_ BO_  "VFrameFormat" INT 0 15;
+BA_DEF_ BO_  "E2EProfile" STRING ;
+BA_DEF_ BO_  "E2EDataId" INT 0 65535;
+BA_DEF_DEF_  "GenMsgCycleTime" 0;
+BA_DEF_DEF_  "VFrameFormat" 0;
+BA_DEF_DEF_  "E2EProfile" "11A";
+BA_DEF_DEF_  "E2EDataId" 0;
+
+BA_ "GenMsgCycleTime" BO_ 256 10;
+BA_ "GenMsgCycleTime" BO_ 512 20;
+BA_ "GenMsgCycleTime" BO_ 768 10;
+BA_ "VFrameFormat" BO_ 256 0;
+BA_ "VFrameFormat" BO_ 512 0;
+BA_ "VFrameFormat" BO_ 768 14;
+BA_ "VFrameFormat" BO_ 1024 0;
+BA_ "E2EProfile" BO_ 256 "11A";
+BA_ "E2EDataId" BO_ 256 291;
+BA_ "E2EProfile" BO_ 512 "none";
+BA_ "E2EProfile" BO_ 768 "none";

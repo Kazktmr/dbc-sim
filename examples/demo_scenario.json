@@ -1,0 +1,47 @@
+{
+  "channels": [
+    {
+      "name": "powertrain",
+      "kind": "can",
+      "interface": "pcan",
+      "channel": "PCAN_USBBUS1",
+      "bitrate": 500000,
+      "data_bitrate": null,
+      "fd_iso": true,
+      "dbc_paths": ["examples/powertrain_demo.dbc"]
+    },
+    {
+      "name": "chassis",
+      "kind": "canfd",
+      "interface": "vector",
+      "channel": "0",
+      "bitrate": 500000,
+      "data_bitrate": 2000000,
+      "fd_iso": true,
+      "dbc_paths": ["examples/powertrain_demo.dbc"]
+    }
+  ],
+  "signal_overrides": {
+    "EngineData": {
+      "EngineSpeed": 2400.0,
+      "CoolantTemp": 90.0,
+      "AcceleratorPedal": 18.0,
+      "EngineRunning": 1.0
+    }
+  },
+  "cyclic_enabled": {
+    "EngineData": true,
+    "VehicleSpeed": true,
+    "ChassisStatus": true
+  },
+  "e2e_faults": {
+    "EngineData": {
+      "fault_crc": false,
+      "fault_freeze_counter": false,
+      "fault_skip_counter": false
+    }
+  },
+  "logging_enabled": false,
+  "log_path": "traces/session.asc",
+  "backend": "null"
+}
