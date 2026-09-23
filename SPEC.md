@@ -14,11 +14,13 @@ Load raw `.dbc` files and transmit/receive on real hardware (PCAN-USB or Vector)
 - Optional ASC logging, JSON scenario persistence
 - Minimal UDS Read-DID sweep only
 - Terminal color status (green/yellow/red) and later sparklines
+- Local browser live view on `dbc-sim run --live` (status + last-N decode + TX edits)
 - `pyproject.toml` pinned deps so clone-and-run matches across machines
 
 ## Non-goals (v1)
 
-Cross-channel triggers, full UDS, GUI window, pip registry publish.
+Cross-channel triggers, full UDS, packaged desktop GUI window, pip registry publish.
+A local browser live view is in scope; a standalone GUI app is not.
 
 ## Hardware
 

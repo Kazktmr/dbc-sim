@@ -16,7 +16,10 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 dbc-sim --help
 pytest
+dbc-sim run examples/powertrain_demo.dbc --live
 ```
+
+`dbc-sim run --live` starts one classic-CAN channel (`powertrain`) and opens a local browser at `http://127.0.0.1:8765/`. Pause TX, edit signal values, and inject E2E faults there. Use `--channel chassis` or `--channel all` when you want CAN FD or both buses. `--seconds` is optional in live mode (runs until Ctrl+C).
 
 Pinned versions live in `pyproject.toml` so machines do not drift.
 
@@ -31,6 +34,7 @@ Pinned versions live in `pyproject.toml` so machines do not drift.
 - Scenario JSON save / load
 - UDS Read-DID (`0x22`) request builder
 - Color status model (green / yellow / red)
+- Live browser view (`dbc-sim run --live`): rolling decoded frames, status colors, live signal edits, E2E fault injection
 
 ## Tests and example report
 
